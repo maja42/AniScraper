@@ -1,0 +1,21 @@
+package main
+
+import (
+	lcf "github.com/Robpol86/logrus-custom-formatter"
+	"github.com/Sirupsen/logrus"
+	"github.com/maja42/AniScraper/filesystem"
+	"github.com/maja42/AniScraper/utils"
+)
+
+var log = logrus.New()
+
+func SetupLogger(consoleLevel logrus.Level) {
+	log.Level = consoleLevel
+
+	lcf.WindowsEnableNativeANSI(true)
+	template := "%[shortLevelName]s[%04[relativeCreated]d] %-45[message]s%[fields]s\n"
+	log.Formatter = lcf.NewFormatter(template, nil)
+
+	filesystem.SetPackageLogger(log)
+	utils.SetPackageLogger(log)
+}
