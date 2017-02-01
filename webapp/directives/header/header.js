@@ -1,10 +1,10 @@
 'use strict';
 
 angular.module('AniScraper')
-.directive('header', function(){
+.directive('header', [function() {
     return {
-    templateUrl:'directives/header/header.html',
-    restrict: 'E',
-    replace: true,
-    }    
-});
+        templateUrl:'directives/header/header.html',
+        restrict: 'E',
+        replace: true,
+    };
+}]);

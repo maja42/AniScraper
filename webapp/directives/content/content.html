@@ -4,64 +4,21 @@
     <div class="container-fluid" id="page-wrapper">
         <h1 class="page-header">Media</h1>
 
-        <table class="table table-hover" id="customer-table">
+        <table class="table">
             <thead>
                 <tr>
-                    <th class="id col-lg-2">Kunde</th>
-                    <th class="id col-lg-2">Tags</th>
-                    <th class="id col-lg-2">Kommentar</th>
-                    <th class="id col-lg-1 text-center">Aktiv</th>
-                    <th class="id col-lg-2">Letzte Bestellung</th>
-                    <th class="id col-lg-2">Letzte Änderung</th>
-                    <th class="id col-lg-1"></th>
+                    <th class="id col-lg-2">Col 1</th>
+                    <th class="id col-lg-2">Col 2</th>
+                    <th class="id col-lg-2">Col 3</th>
+                    <th class="id col-lg-1 text-center">Col 4</th>
+                    <th class="id col-lg-2">Col 5</th>
+                    <th class="id col-lg-2">Col 6</th>
+                    <th class="id col-lg-1">Col 7</th>
                 </tr>
             </thead>
             <tbody>
-
-                <!-- TODO: improve ON-CLICK functionality:    http://stackoverflow.com/a/905896/2224996 -->
-                <tr ng-repeat="customer in customers" ng-class="{inactive: !customer.status}">
-                    <td class="identifier-column clickable-cell" ui-sref="customerDetails({identType: 'id', ident: customer.cid})">
-                        <strong>{{customer.name}}</strong><br>
-                        <div class="idInfo">CID {{customer.cid}}</div>
-                    </td>
-
-                    <td>
-                        <customer-tag class="tag outline" ng-repeat="tag in customer.tags" name="tag" ></customer-tag>
-                    </td>
-
-
-                    <td class="comment"><div class="limited-height">{{customer.comment}}</div></td>
-                    <td class="text-center">{{customer.status | checkmarkCrossFilter}}</td>
-                    <td>raw: {{customer.modified}}</td>
-                    <td ng-bind-html="customer.modified | datetimeArrayFilter:{multiline: true}"></td>
-
-
-                    <td class="button-column">
-                        <div class="btn-group-vertical" role="group" aria-label="customer tasks">
-                            <button type="button" class="btn btn-default"><i class="fa fa-fw fa-cubes"></i><span>Bestellungen</span></button>
-                            <button type="button" class="btn btn-default"><i class="fa fa-fw fa-cart-plus"></i><span>Neue Bestellung</span></button>
-                        </div>
-                    </td>
-                </tr>
             </tbody>
         </table>
-        <div class="no-data" ng-show="customers.length == 0">Keine Kunden vorhanden</div>
-
-
-        <div class="text-center" ng-show="pageInfo.totalPages > 1">
-            <pagination
-                    ng-change="loadPage()"
-                    ng-model="currentPage"
-                    items-per-page="pageInfo.pageSize"
-                    total-items="pageInfo.totalElements"
-                    boundary-links="true"
-                    previous-text="‹"
-                    next-text="›"
-                    first-text="«"
-                    last-text="»"
-                    ></pagination>
-            <!--TODO: defaults-->
-        </div>
-
+        
     </div>
 </div>

@@ -1,7 +1,7 @@
 'use strict';
 
 angular.module('AniScraper')
-    .directive('sidebar', ['$location', function () {
+    .directive('sidebar', ['SocketService', function(SocketService) {
         return {
             templateUrl: 'directives/sidebar/sidebar.html',
             restrict: 'E',
@@ -9,6 +9,11 @@ angular.module('AniScraper')
             scope: {
                 controls: "=",
                 actionButtons: "="
+            },
+            controller: function ($scope) {
+                SocketService.subscribe($scope, "echo", function(){
+                    console.log("ASDF");
+                });
             }
         }
     }])
