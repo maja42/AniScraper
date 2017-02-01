@@ -5,6 +5,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/maja42/AniScraper/filesystem"
 	"github.com/maja42/AniScraper/utils"
+	"github.com/maja42/AniScraper/webserver"
 )
 
 var log = logrus.New()
@@ -18,4 +19,5 @@ func SetupLogger(consoleLevel logrus.Level) {
 
 	filesystem.SetPackageLogger(log)
 	utils.SetPackageLogger(log)
+	webserver.SetPackageLogger(log)
 }

@@ -22,5 +22,4 @@ xcopy /s/e/h/k/y resources export\resources\ 		|| goto :error
 goto :EOF
 :error
 echo Failed with error #%errorlevel%.
-pause
 exit /b %errorlevel%

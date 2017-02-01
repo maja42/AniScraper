@@ -18,6 +18,11 @@ type MediaCollection interface {
 	AddFolder(path string, name string) error
 	// Contains checks if the given path / media folder is already part of the collection
 	Contains(folder os.FileInfo) bool
+	// Folders returns all existing media folders by their uid
+	Folders() map[int]*MediaFolder
+	// UIds() returns a list with all existing uids stored in this collection
+	UIds() []int
+	// Paths returns a list with all absolute file paths of every mediafolder
 	Paths() []string
 }
 
@@ -135,11 +140,30 @@ func (collection *mediaCollection) Paths() []string {
 	collection.mutex.Lock()
 	defer collection.mutex.Unlock()
 
-	paths := make([]string, len(collection.folders))
+	paths := make([]string, 0, len(collection.folders))
 
 	for _, mediaFolder := range collection.folders {
 		paths = append(paths, mediaFolder.FullPath())
 	}
 
 	return paths
+}
+
+func (collection *mediaCollection) Folders() map[int]*MediaFolder {
+	collection.mutex.Lock()
+	defer collection.mutex.Unlock()
+	return collection.folders
+}
+
+func (collection *mediaCollection) UIds() []int {
+	collection.mutex.Lock()
+	defer collection.mutex.Unlock()
+
+	uids := make([]int, 0, len(collection.folders))
+
+	for uid := range collection.folders {
+		uids = append(uids, uid)
+	}
+
+	return uids
 }

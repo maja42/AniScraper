@@ -1,0 +1,84 @@
+.sidebar
+{
+    margin-top: 0;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+.sidebar.in
+{
+    height: calc(100% - 51px);
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    align-items: stretch;
+}
+
+#sidebar-action-buttons li
+{
+    border-top: 1px solid #eeeeee;
+    border-bottom: none;
+}
+
+.sidebar li.noSeparation
+{
+    border-bottom: none;
+}
+    .sidebar li.noSeparation > div
+    {
+        padding-bottom: 0;
+    }
+
+.sidebar li > a, .sidebar li > .input, .sidebar li > .sub-menu
+{
+    padding: 10px 15px;
+}
+.sidebar .input
+{
+    width: 100%;
+}
+    .sidebar .input i
+    {
+        margin-right: 0.25em;
+    }
+    .sidebar .input label
+    {
+        margin: 0;
+        width: 100%;
+        font-weight: normal;
+        color: #337ab7;
+        cursor: pointer;
+    }
+    .sidebar .input input[type=checkbox], .sidebar .input select
+    {
+        float: right;
+        color: black;
+    }
+    
+.sidebar .sub-menu > a
+{
+    display: block;
+}
+.sidebar .sub-menu a, .sidebar .sub-menu .input, .sidebar .sub-menu .sub-menu
+{
+    padding: 0;
+}
+.sidebar .sub-menu > ul
+{
+    padding-bottom: 5px;
+    border-left: 2px solid #999999;
+    border-bottom: 2px solid #999999;
+}
+    .sidebar .sub-menu > ul > li
+    {
+        padding: 5px 0 5px 15px;
+        border: none !important;
+    }
+
+/*# sourceMappingURL=sidebar.css.map */

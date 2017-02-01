@@ -14,5 +14,4 @@ call export\AniScraper.exe || goto :error
 goto :EOF
 :error
 echo Failed with error #%errorlevel%.
-pause
 exit /b %errorlevel%
