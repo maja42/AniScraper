@@ -12,7 +12,7 @@ angular.module('AniScraper')
             },
             controller: function ($scope) {
                 SocketService.subscribe($scope, "echo", function(){
-                    console.log("ASDF");
+                    console.log(":::: IT WORKS ::::");
                 });
             }
         }

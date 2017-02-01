@@ -27,11 +27,11 @@ angular.module('AniScraper')
             });
 
             SocketService.subscribe($scope, "echo-reply", function(messageType, message) {
-                $log.debug("Got echo reply message:", message);
+                $log.info("Got echo reply message:", message);
             });
 
             SocketService.subscribe($scope, "echo", function(messageType, message) {
-                $log.debug("Replying to echo message: ", message);
+                $log.info("Replying to echo message: ", message);
                 SocketService.send("echo-reply", message);
             });
 

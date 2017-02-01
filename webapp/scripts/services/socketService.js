@@ -84,7 +84,7 @@ angular.module('AniScraper')
             messageTypes = [messageTypes];
         }
 
-        var handler = $rootScope.$on("websocket-message-event", function(messageType, message){
+        var handler = $rootScope.$on("websocket-message-event", function(event, messageType, message){
             if(messageTypes.indexOf(messageType) !== -1) {  // The caller is interested in this message type
                 callback(messageType, message);
             }
@@ -104,7 +104,9 @@ angular.module('AniScraper')
             return;
         }
 
-        var handler = $rootScope.$on(eventTypes[eventType], callback);
+        var handler = $rootScope.$on(eventTypes[eventType], function(event, socketEvent) {
+            callback(socketEvent);
+        });
         $scope.$on('$destroy', handler);
     };
 
