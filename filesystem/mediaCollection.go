@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/maja42/AniScraper/utils"
+	"github.com/maja42/AniScraper/webserver/exchange"
 )
 
 // MediaCollection is a collection of multiple, unique mediafolders
@@ -24,19 +25,26 @@ type MediaCollection interface {
 	UIds() []int
 	// Paths returns a list with all absolute file paths of every mediafolder
 	Paths() []string
+
+	Exchange() exchange.MessageExchange
 }
 
 type mediaCollection struct {
+	mutex sync.RWMutex
+
+	uidSequence utils.Sequence       // Used for generating unique ids
 	folders     map[int]*MediaFolder // uid -> mediaFolder
-	mutex       sync.RWMutex
-	uidSequence utils.Sequence // Used for generating unique ids
+
+	exchange exchange.MessageExchange
 }
 
 // NewMediaCollection initialises and returns a new and empty media collection
 func NewMediaCollection() MediaCollection {
 	return &mediaCollection{
-		folders:     make(map[int]*MediaFolder, 0),
 		uidSequence: utils.NewSequenceGenerator(0),
+		folders:     make(map[int]*MediaFolder, 0),
+
+		exchange: exchange.NewMessageExchange(),
 	}
 }
 
@@ -110,6 +118,7 @@ func (collection *mediaCollection) AddFolder(path string, folderName string) err
 	defer collection.mutex.Unlock()
 
 	collection.folders[uid] = media
+	collection.exchange.Publish("newMediaFolder", uid, 0)
 	return nil
 }
 
@@ -166,4 +175,8 @@ func (collection *mediaCollection) UIds() []int {
 	}
 
 	return uids
+}
+
+func (collection *mediaCollection) Exchange() exchange.MessageExchange {
+	return collection.exchange
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/maja42/AniScraper/filesystem"
@@ -42,6 +43,21 @@ func main() {
 	server.Start(ctx)
 
 	var mediaCollection = filesystem.NewMediaCollection()
+
+	newFolderChannel := mediaCollection.Exchange().Subscribe([]string{"newMediaFolder"})
+	go func() {
+		for {
+			message, ok := <-newFolderChannel
+			if !ok {
+				return
+			}
+
+			server.Send(message.Sender, "newMediaFolder", message.Content)
+
+		}
+	}()
+
+	time.Sleep(3 * time.Second)
 
 	folder := "M:"
 
