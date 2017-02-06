@@ -10,12 +10,25 @@ angular.module('AniScraper')
             websocketUrl: "@"
         },
         controller: function ($scope) {
+           
             SocketService.subscribeToMeta($scope, "connected", function(event) {
                 $log.info("Connected to websocket");
                 var message = "I am alive!";
                 $log.debug("Sending echo message: " + message);
-                SocketService.send("echo", message);
+
+
+                SocketService.send("echo", message, function(messageType, incomingMessage) {
+                    if(messageType == "echo-reply" && message == incomingMessage) {
+                        $log.info("Echo-Channel works. The server responded correctly.");
+                    }else {
+                        $log.error("Echo-Channel is broken. The server responded with a different message. Type=", messageType, "Message=", incomingMessage);
+                    }
+                }, function(errorMessage) {
+                    $log.error("Echo-Channel is broken.", errorMessage);
+                });
             });
+
+
 
             SocketService.subscribeToMeta($scope, "error", function(event) {
                 $log.error("Websocket error", event);
@@ -24,10 +37,6 @@ angular.module('AniScraper')
             SocketService.subscribeToMeta($scope, "disconnected", function(event) {
                 $log.info("Disconnected from websocket (" + event.code + ")", event.message);
                 // TODO: reconnect
-            });
-
-            SocketService.subscribe($scope, "echo-reply", function(messageType, message) {
-                $log.info("Got echo reply message:", message);
             });
 
             SocketService.subscribe($scope, "echo", function(messageType, message) {

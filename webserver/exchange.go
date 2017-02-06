@@ -1,16 +1,21 @@
-package exchange
+package webserver
 
 import "sync"
 
 type Message struct {
 	Topic   string
 	Content interface{}
+
 	Sender  int
+	Respond MessageRespondFunc
 }
 
+type MessageRespondFunc func(topic string, message interface{}) error
+
 type MessageExchange interface {
-	Publish(topic string, message interface{}, sender int) int
+	publish(topic string, message interface{}, sender int, respondFunc MessageRespondFunc) int
 	Subscribe(topics []string) <-chan Message
+
 	Shutdown()
 }
 
@@ -29,7 +34,7 @@ func NewMessageExchange() MessageExchange {
 }
 
 // Publish broadcasts a message about a specific topic and returns the number of recipients
-func (exchange *messageExchange) Publish(topic string, message interface{}, sender int) int {
+func (exchange *messageExchange) publish(topic string, content interface{}, sender int, respondFunc MessageRespondFunc) int {
 	var subs []chan Message
 
 	exchange.mutex.RLock()
@@ -40,12 +45,15 @@ func (exchange *messageExchange) Publish(topic string, message interface{}, send
 		return 0
 	}
 
+	message := Message{
+		Topic:   topic,
+		Content: content,
+		Sender:  sender,
+		Respond: respondFunc,
+	}
+
 	for _, subscriber := range subs {
-		subscriber <- Message{
-			Topic:   topic,
-			Content: message,
-			Sender:  sender,
-		}
+		subscriber <- message
 	}
 	return len(subs)
 }

@@ -1,9 +1,13 @@
 'use strict';
 
 angular.module('AniScraper')
-.service('SocketService', function($log, $rootScope){
+.service('SocketService', function($log, $rootScope, $timeout){
+    var messageResponseTimeout = 10000;     // number of milliseconds until waiting for a message response is aborted with a timeout.
     var socket = null;
     var connected = false;
+    var correlationIdSequence = 0;
+
+    var futures = {};       // map containing all callback functions for message responses.
 
     this.connect = function(url) {
         if(this.isConnected()) {
@@ -63,20 +67,71 @@ angular.module('AniScraper')
             return;
         }
         $log.debug("Received incomming message (" + messageObject.messageType + "):", messageObject.message)
-        $rootScope.$emit("websocket-message-event", messageObject.messageType, messageObject.message);
+
+        if(messageObject.responseFor && messageObject.responseFor > 0) {
+            // This is a response message
+            messageResponseReceived(messageObject.responseFor, messageObject.messageType, messageObject.message);
+        } else {
+            $rootScope.$emit("websocket-message-event", messageObject.messageType, messageObject.message);
+        }
     }
 
-    this.send = function(messageType, message) {
+    this.send = function(messageType, message, success, error) {
         if(!this.isConnected()) {
             $log.error("Unable to send message: Not connected. \nMessage type:", messageType, "\nMessage:", message);
             return;
         }
+        var expectsResponse = success || error;
+
         var messageObject = {
             "messageType": messageType,
             "message": message
         };
+
+        if(expectsResponse) {
+            // This message is expecting a response
+            var corId = nextCorrelationId();
+            messageObject.answerAt = corId;
+            
+            futures[corId] = {
+                success: success,
+                error: error,
+                timer: $timeout(function() {
+                    messageResponseAbortion(corId, "Timeout reached.");
+                }, messageResponseTimeout),
+            };
+        }
         socket.send(JSON.stringify(messageObject));
     };
+
+    function nextCorrelationId() {
+        ++correlationIdSequence;
+        return correlationIdSequence;
+    }
+
+    // Executed after a message response has been received
+    function messageResponseReceived(corId, messageType, message) {
+        var future = futures[corId];
+        if(!future) {
+            $log.error("Received a message response for unknown correlationId " + corId + ". Maybe the original message already timed out?");
+            return;
+        }
+        futures[corId] = undefined;
+
+        $timeout.cancel(future.timer);
+        if(future.success) {
+            future.success(messageType, message);
+        }
+    }
+
+    // Executed if we don't expect a response for the given message anymore. For example after timeout has been reached (the server didn't respond to a message which expected one in time)
+    function messageResponseAbortion(corId, errorMessage) {
+        var future = futures[corId];
+        futures[corId] = undefined;
+        if(future.error) {
+            future.error(errorMessage);
+        }
+    }
 
     // Subscribe to incoming messages...
     this.subscribe = function($scope, messageTypes, callback) {
@@ -110,4 +165,16 @@ angular.module('AniScraper')
         $scope.$on('$destroy', handler);
     };
 
+
+    function destroy() {
+        // Cancel all running timers and inform waiting listeners that they won't get a response anytime soon
+        for(corId in futures) {
+            $timeout.cancel(futures[corId].timer);
+            messageResponseAbortion(corId, "SocketService destroyed");
+        }
+    }
+
+    $rootScope.$on("$destroy", function(event) {
+       destroy();
+    });
 });

@@ -9,15 +9,21 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/maja42/AniScraper/utils"
-	"github.com/maja42/AniScraper/webserver/exchange"
 )
 
 type WebServer interface {
 	Start(ctx context.Context)
-	Exchange() exchange.MessageExchange
-	Send(destination int, topic string, message interface{}) error
+	Exchange() MessageExchange
+
+	Send(cid int, topic string, message interface{}) error
 	Broadcast(topic string, message interface{}) error
 }
+
+// ClientConnectedCallback is a callback function that is executed after a new client connected
+type ClientConnectedCallback func(cid int)
+
+// ClientDisconnectedCallback is a callback function that is executed after an existing client disconnected
+type ClientDisconnectedCallback func(cid int)
 
 type webServer struct {
 	mutex   sync.RWMutex
@@ -28,7 +34,9 @@ type webServer struct {
 	clientIdSequence utils.Sequence
 	clients          map[int]*Client // clientId => client
 
-	exchange exchange.MessageExchange
+	exchange     MessageExchange
+	connected    ClientConnectedCallback
+	disconnected ClientDisconnectedCallback
 }
 
 // Client represents a single connected client that communicates via a websocket
@@ -36,18 +44,23 @@ type Client struct {
 	socket *websocket.Conn
 }
 
-// Message defines the JSON format for client communication
-type Message struct {
+// rawMessage defines the JSON format for sending client messages
+type rawMessage struct {
 	Type    string      `json:"messageType"`
 	Message interface{} `json:"message"`
+
+	ResponseFor int `json:"responseFor"` // If >0, this is a response to the message with 'AnswerAt' set to the given correlation ID
+	AnswerAt    int `json:"answerAt"`    // If >0, this message expects a response with the 'ResponseFor' field set to the given correlation ID
 }
 
-func NewWebServer(config *WebServerConfig) WebServer {
+func NewWebServer(config *WebServerConfig, connected ClientConnectedCallback, disconnected ClientDisconnectedCallback) WebServer {
 	webserver := &webServer{
 		started:          false,
 		clientIdSequence: utils.NewSequenceGenerator(0),
 		clients:          make(map[int]*Client),
-		exchange:         exchange.NewMessageExchange(),
+		exchange:         NewMessageExchange(),
+		connected:        connected,
+		disconnected:     disconnected,
 	}
 
 	var handler = http.NewServeMux()
@@ -127,10 +140,18 @@ func (server *webServer) websocketHandler(res http.ResponseWriter, req *http.Req
 		delete(server.clients, cid)
 
 		log.Debugf("Total clients connected: %d", len(server.clients))
+
+		if server.disconnected != nil {
+			server.disconnected(cid)
+		}
 	}()
 
 	log.Debug("Sending echo message to new client")
 	go server.Send(cid, "echo", "Hello there!")
+
+	if server.connected != nil {
+		server.connected(cid)
+	}
 }
 
 // checkOrigin decides if the given request is allowed to be processed
@@ -146,38 +167,66 @@ func (server *webServer) handleIncomingClientMessages(cid int, client *Client) e
 		if err != nil {
 			return err
 		}
-		log.Debugf("Received message. Raw content: %q (type %d)", string(msg), msgType)
 
-		var message Message
+		var message rawMessage
 		if err := json.Unmarshal(msg, &message); err != nil {
-			log.Errorf("Failed to unmarshal incoming websocket message. Disconnecting. \nMessage: %q", string(msg))
+			log.Errorf("Failed to unmarshal incoming websocket message. Disconnecting. \nRaw content: %q (type %d)", string(msg), msgType)
 			return fmt.Errorf("Disconnected due to protocol error")
 		}
-		log.Infof("Received message (type %q): %v", message.Type, message.Message)
 
-		recipients := server.exchange.Publish(message.Type, message.Message, cid)
+		var respondFunc MessageRespondFunc
+
+		if message.AnswerAt > 0 {
+			log.Debugf("Received message (type %q, with response): %v", message.Type, message.Message)
+
+			respondFunc = func(topic string, content interface{}) error {
+				return server.respond(cid, message.AnswerAt, topic, content)
+			}
+		} else {
+			log.Debugf("Received message (type %q): %v", message.Type, message.Message)
+
+			respondFunc = func(topic string, content interface{}) error {
+				return fmt.Errorf("Unable to send response message: The message (type=%q) didn't expect a response.", message.Type)
+			}
+		}
+
+		recipients := server.exchange.publish(message.Type, message.Message, cid, respondFunc)
 		if recipients == 0 {
 			log.Warnf("There are no recipients for messages of type %q", message.Type)
 		}
 	}
 }
 
-func (server *webServer) Exchange() exchange.MessageExchange {
+func (server *webServer) Exchange() MessageExchange {
 	return server.exchange
 }
 
-func (server *webServer) Send(destination int, topic string, message interface{}) error {
-	textMessage, err := server.marshal(topic, message)
+func (server *webServer) Send(cid int, topic string, message interface{}) error {
+	textMessage, err := server.marshal(topic, message, 0, 0)
 	if err != nil {
 		return err
 	}
+	return server.send(cid, textMessage)
+}
 
+func (server *webServer) respond(cid int, correlationId int, topic string, message interface{}) error {
+	if correlationId <= 0 {
+		return fmt.Errorf("Unable to respond to message: There is no correlation id.")
+	}
+	textMessage, err := server.marshal(topic, message, correlationId, 0)
+	if err != nil {
+		return err
+	}
+	return server.send(cid, textMessage)
+}
+
+func (server *webServer) send(cid int, textMessage []byte) error {
 	server.mutex.RLock()
 	defer server.mutex.RUnlock()
 
-	client, ok := server.clients[destination]
+	client, ok := server.clients[cid]
 	if !ok {
-		return fmt.Errorf("Failed to send message: Destination %d is unknown", destination)
+		return fmt.Errorf("Failed to send message: Destination cid=%d is unknown", cid)
 	}
 
 	return client.socket.WriteMessage(websocket.TextMessage, textMessage)
@@ -185,7 +234,7 @@ func (server *webServer) Send(destination int, topic string, message interface{}
 
 // Broadcast sends the given message to all connected clients
 func (server *webServer) Broadcast(topic string, message interface{}) error {
-	textMessage, err := server.marshal(topic, message)
+	textMessage, err := server.marshal(topic, message, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -201,10 +250,15 @@ func (server *webServer) Broadcast(topic string, message interface{}) error {
 	return nil
 }
 
-func (server *webServer) marshal(topic string, message interface{}) ([]byte, error) {
-	messageObject := &Message{
-		Type:    topic,
-		Message: message,
+func (server *webServer) marshal(topic string, message interface{}, responseFor int, answerAt int) ([]byte, error) {
+	if answerAt > 0 {
+		return []byte{}, fmt.Errorf("Unable to marshal message: Messages-with-response are not supported for the server-side yet (not implemented). Currently only the client can request a response.")
+	}
+	messageObject := &rawMessage{
+		Type:        topic,
+		Message:     message,
+		ResponseFor: responseFor,
+		AnswerAt:    answerAt,
 	}
 	return json.Marshal(messageObject)
 }

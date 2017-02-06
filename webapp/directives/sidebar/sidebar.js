@@ -11,15 +11,15 @@ angular.module('AniScraper')
                 actionButtons: "="
             },
             controller: function ($scope) {
-                $scope.mediaCollection = ["A", "B", "C"];
+                $scope.animeCollection = ["A", "B", "C"];
 
 
-                SocketService.subscribe($scope, "clearMediaCollection", function(messageType, message){
-                    $scope.mediaCollection = [];
+                SocketService.subscribe($scope, "clearAnimeCollection", function(messageType, message){
+                    $scope.animeCollection = [];
                 });
 
-                SocketService.subscribe($scope, "newMediaFolder", function(messageType, message){
-                    $scope.mediaCollection.push("aaa" + message);
+                SocketService.subscribe($scope, "newAnimeFolder", function(messageType, message){
+                    $scope.animeCollection.push("aaa" + message);
 
                     $scope.$apply();
                 });

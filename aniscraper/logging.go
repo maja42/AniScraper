@@ -1,4 +1,4 @@
-package filesystem
+package aniscraper
 
 import "github.com/Sirupsen/logrus"
 
