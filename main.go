@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/maja42/AniScraper/aniscraper"
@@ -62,15 +63,15 @@ func main() {
 	// 	}
 	// }()
 
-	// time.Sleep(3 * time.Second)
+	time.Sleep(3 * time.Second)
 
-	// folder := "M:"
+	folder := "M:"
 
-	// count, err := animeCollection.AddCollection(folder)
-	// if err != nil {
-	// 	log.Fatalf("Failed to add folder %q: %v", folder, err)
-	// }
-	// log.Infof("Added %d folders", count)
+	count, err := animeCollection.AddCollection(folder)
+	if err != nil {
+		log.Fatalf("Failed to add folder %q: %v", folder, err)
+	}
+	log.Infof("Added %d folders", count)
 
 	<-ctx.Done()
 }

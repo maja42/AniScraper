@@ -94,9 +94,33 @@ func (binding *bindingContext) ClientBindingContext() ClientBindingContext {
 }
 
 func (srvBinding *bindingContext) NewAnimeFolder(afid int, folder *AnimeFolder) {
+	if err := srvBinding.synchronizeAnimeFolder(afid, folder, -1); err != nil {
+		log.Errorf("Failed to broadcast new anime folder %v", err)
+	}
+}
 
+func (binding *bindingContext) synchronizeAnimeFolder(afid int, folder *AnimeFolder, cid int) error {
+	messageType := "newAnimeFolder"
+	message := struct {
+		AfId       int
+		FolderName string
+	}{
+		afid,
+		folder.Name,
+	}
+
+	return binding.webserver.Transmit(cid, messageType, message)
 }
 
 func (cliBinding *bindingContext) NewClient(cid int) {
+	// Synchronize AnimeCollection
+	cliBinding.webserver.Send(cid, "clearAnimeCollection", nil)
 
+	cliBinding.animeCollection.Iterate(func(afid int, folder *AnimeFolder) bool {
+		if err := cliBinding.synchronizeAnimeFolder(afid, folder, cid); err != nil {
+			log.Errorf("Failed to synchronize anime collection %v", err)
+			return false
+		}
+		return true // continue iterating
+	})
 }

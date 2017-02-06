@@ -21,9 +21,12 @@ type AnimeCollection interface {
 	// Folders returns all existing anime folders by their afid
 	//Folders() map[int]*AnimeFolder
 	// AfIds() returns a list with all existing afids stored in this collection
-	AfIds() []int
+	//AfIds() []int
 	// Paths returns a list with absolute paths of all anime folders
-	Paths() []string
+	//Paths() []string
+
+	// Iterate calles the given function for every animeFolder, until false is returned (do not continue) or there are no more folders
+	Iterate(callback func(afid int, folder *AnimeFolder) bool)
 }
 
 type animeCollection struct {
@@ -151,26 +154,37 @@ func (collection *animeCollection) contains(folder os.FileInfo) bool {
 	return false
 }
 
-func (collection *animeCollection) Paths() []string {
+// func (collection *animeCollection) Paths() []string {
+// 	collection.mutex.RLock()
+// 	defer collection.mutex.RUnlock()
+
+// 	paths := make([]string, 0, len(collection.folders))
+
+// 	for _, animeFolder := range collection.folders {
+// 		paths = append(paths, animeFolder.FullPath())
+// 	}
+// 	return paths
+// }
+
+// func (collection *animeCollection) AfIds() []int {
+// 	collection.mutex.RLock()
+// 	defer collection.mutex.RUnlock()
+
+// 	uids := make([]int, 0, len(collection.folders))
+
+// 	for uid := range collection.folders {
+// 		uids = append(uids, uid)
+// 	}
+// 	return uids
+// }
+
+func (collection *animeCollection) Iterate(callback func(afid int, folder *AnimeFolder) bool) {
 	collection.mutex.RLock()
 	defer collection.mutex.RUnlock()
 
-	paths := make([]string, 0, len(collection.folders))
-
-	for _, animeFolder := range collection.folders {
-		paths = append(paths, animeFolder.FullPath())
+	for afid, animeFolder := range collection.folders {
+		if !callback(afid, animeFolder) {
+			return
+		}
 	}
-	return paths
-}
-
-func (collection *animeCollection) AfIds() []int {
-	collection.mutex.RLock()
-	defer collection.mutex.RUnlock()
-
-	uids := make([]int, 0, len(collection.folders))
-
-	for uid := range collection.folders {
-		uids = append(uids, uid)
-	}
-	return uids
 }

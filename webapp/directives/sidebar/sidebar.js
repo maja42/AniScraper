@@ -19,7 +19,7 @@ angular.module('AniScraper')
                 });
 
                 SocketService.subscribe($scope, "newAnimeFolder", function(messageType, message){
-                    $scope.animeCollection.push("aaa" + message);
+                    $scope.animeCollection.push(message);
 
                     $scope.$apply();
                 });

@@ -15,8 +15,10 @@ type WebServer interface {
 	Start(ctx context.Context)
 	Exchange() MessageExchange
 
-	Send(cid int, topic string, message interface{}) error
-	Broadcast(topic string, message interface{}) error
+	Send(cid int, topic string, message interface{}) error // Sends the message to one specific client
+	Broadcast(topic string, message interface{}) error     // Broadcasts the message to all clients
+
+	Transmit(cid int, topic string, message interface{}) error // Sends the message to one specific client (cid >= 0) or broadcasts it to all clients (cid < 0)
 }
 
 // ClientConnectedCallback is a callback function that is executed after a new client connected
@@ -41,7 +43,11 @@ type webServer struct {
 
 // Client represents a single connected client that communicates via a websocket
 type Client struct {
-	socket *websocket.Conn
+	sockWriteMutex sync.Mutex // websocket.Conn does not support concurrent access -> sync. write access ("Applications are responsible for ensuring that no more than one goroutine calls the write methods (NextWriter, SetWriteDeadline, WriteMessage, WriteJSON, EnableWriteCompression, SetCompressionLevel) concurrently and that no more than one goroutine calls the read methods (NextReader, SetReadDeadline, ReadMessage, ReadJSON, SetPongHandler, SetPingHandler) concurrently.")
+	sockReadMutex  sync.Mutex // websocket.Conn does not support concurrent access -> sync. read access
+	socket         *websocket.Conn
+
+	receiveBroadcasts bool // if true, this client receives broadcast messages
 }
 
 // rawMessage defines the JSON format for sending client messages
@@ -118,15 +124,15 @@ func (server *webServer) websocketHandler(res http.ResponseWriter, req *http.Req
 	log.Info("Client connected")
 
 	client := &Client{
-		socket: conn,
+		socket:            conn,
+		receiveBroadcasts: false, // Don't send any broadcast messages before the 'connected' routine initialized the client
 	}
 
 	cid := server.clientIdSequence.Next()
 
 	server.mutex.Lock()
-	defer server.mutex.Unlock()
-
 	server.clients[cid] = client
+	server.mutex.Unlock()
 
 	log.Debugf("Total clients connected: %d", len(server.clients))
 
@@ -152,6 +158,7 @@ func (server *webServer) websocketHandler(res http.ResponseWriter, req *http.Req
 	if server.connected != nil {
 		server.connected(cid)
 	}
+	client.receiveBroadcasts = true // The connect-routine has been called. Now it is save to send broadcasts
 }
 
 // checkOrigin decides if the given request is allowed to be processed
@@ -162,6 +169,10 @@ func (server *webServer) checkOrigin(r *http.Request) bool {
 // handleIncomingClientMessages receives all incomming websocket messages, unmarshals them and broadcasts them on the message exchange.
 func (server *webServer) handleIncomingClientMessages(cid int, client *Client) error {
 	defer client.socket.Close()
+
+	client.sockReadMutex.Lock()
+	defer client.sockReadMutex.Unlock()
+
 	for {
 		msgType, msg, err := client.socket.ReadMessage()
 		if err != nil {
@@ -229,6 +240,8 @@ func (server *webServer) send(cid int, textMessage []byte) error {
 		return fmt.Errorf("Failed to send message: Destination cid=%d is unknown", cid)
 	}
 
+	client.sockWriteMutex.Lock()
+	defer client.sockWriteMutex.Unlock()
 	return client.socket.WriteMessage(websocket.TextMessage, textMessage)
 }
 
@@ -243,11 +256,26 @@ func (server *webServer) Broadcast(topic string, message interface{}) error {
 	defer server.mutex.RUnlock()
 
 	for _, client := range server.clients {
+		if !client.receiveBroadcasts {
+			continue
+		}
+
+		client.sockWriteMutex.Lock()
+		defer client.sockWriteMutex.Unlock()
 		if err := client.socket.WriteMessage(websocket.TextMessage, textMessage); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Transmit sends the message to one specific client (cid >= 0) or broadcasts it to all clients (cid < 0)
+func (server *webServer) Transmit(cid int, topic string, message interface{}) error {
+	if cid < 0 {
+		return server.Broadcast(topic, message)
+	} else {
+		return server.Send(cid, topic, message)
+	}
 }
 
 func (server *webServer) marshal(topic string, message interface{}, responseFor int, answerAt int) ([]byte, error) {
