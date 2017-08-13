@@ -2,76 +2,96 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/maja42/AniScraper/aniscraper"
-	"github.com/maja42/AniScraper/webserver"
 )
 
 func main() {
-	SetupLogger(logrus.DebugLevel)
-	log.Info("AniScraper started")
+	logger := SetupLogger(logrus.DebugLevel)
+	logger.Info("AniScraper started")
+	var wg sync.WaitGroup
 
-	config := DefaultConfig()
+	// config := DefaultConfig()
 	ctx := context.Background()
+	ctx, _ = context.WithTimeout(ctx, 5*time.Second)
 
-	bindingContext := aniscraper.NewBindingContext(ctx)
+	identificationChannel := make(chan *aniscraper.AnimeFolder, 100)
 
-	server := webserver.NewWebServer(&config.WebServerConfig,
-		bindingContext.ClientBindingContext().NewClient, // Client connected callback
-		nil) // Client disconnected callback
+	webClient := aniscraper.NewWebClient()
+	identifier := aniscraper.NewAnimeIdentifier(webClient, identificationChannel)
 
-	animeCollection := aniscraper.NewAnimeCollection(bindingContext.ServerBindingContext())
+	// bindingContext := aniscraper.NewBindingContext(ctx)
 
-	bindingContext.Initialize(server, animeCollection)
+	// folder := "C:\\Users\\Jakob\\Desktop\\M"
+	folder := "M:\\"
 
-	// exchange := server.Exchange()
+	// server := webserver.NewWebServer(&config.WebServerConfig,
+	// 	bindingContext.ClientBindingContext().NewClient, // Client connected callback
+	// 	nil) // Client disconnected callback
 
-	// echoChannel := exchange.Subscribe([]string{"echo"})
-	// echoReplyChannel := exchange.Subscribe([]string{"echo-reply"})
+	animeCollection, err := aniscraper.NewAnimeCollection("Test", folder, logger)
+	if err != nil {
+		logger.Panicf("Failed to create anime collection %q: %s", folder, err)
+	}
+
+	errors, err := animeCollection.WatchFilesystem(ctx, true)
+	if err != nil {
+		logger.Panicf("Failed to create anime collection %q: %s", folder, err)
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			err, ok := <-errors
+			if !ok {
+				return
+			}
+			logger.Errorf("AC watcher error: %s", err)
+		}
+	}()
+
+	// bindingContext.Initialize(server, animeCollection)
+
+	// Starting...
+	identifier.Start(ctx, 8) // 8 animes at once
+	// server.Start(ctx)
+
+	// count, err := animeCollection.AddCollection(folder)
+	// if err != nil {
+	// 	logger.Fatalf("Failed to add folder %q: %v", folder, err)
+	// }
+	// logger.Infof("Added %d folders", count)
+
+	// watcher, err := fsnotify.NewWatcher()
+	// if err != nil {
+	// 	logger.Fatal(err)
+	// }
+	// defer watcher.Close()
+
 	// go func() {
 	// 	for {
 	// 		select {
-	// 		case message, ok := <-echoChannel:
-	// 			if !ok {
-	// 				return
+	// 		case event := <-watcher.Events:
+	// 			logger.Println("event:", event)
+	// 			if event.Op&fsnotify.Write == fsnotify.Write {
+	// 				logger.Println("modified file:", event.Name)
 	// 			}
-	// 			log.Infof("Responding to echo message: %v", message.Content)
-	// 			server.Send(message.Sender, "echo-reply", message.Content)
-	// 		case message, ok := <-echoReplyChannel:
-	// 			if !ok {
-	// 				return
-	// 			}
-	// 			log.Infof("Received echo reply message: %v", message.Content)
+	// 		case err := <-watcher.Errors:
+	// 			logger.Println("error:", err)
 	// 		}
 	// 	}
 	// }()
 
-	server.Start(ctx)
-
-	// newFolderChannel := animeCollection.Exchange().Subscribe([]string{"newAnimeFolder"})
-	// go func() {
-	// 	for {
-	// 		message, ok := <-newFolderChannel
-	// 		if !ok {
-	// 			return
-	// 		}
-
-	// 		server.Send(message.Sender, "newAnimeFolder", message.Content)
-
-	// 	}
-	// }()
-
-	time.Sleep(3 * time.Second)
-
-	folder := "M:"
-
-	count, err := animeCollection.AddCollection(folder)
-	if err != nil {
-		log.Fatalf("Failed to add folder %q: %v", folder, err)
-	}
-	log.Infof("Added %d folders", count)
+	// err = watcher.Add(folder)
+	// if err != nil {
+	// 	logger.Fatal(err)
+	// }
 
 	<-ctx.Done()
+	animeCollection.Wait()
+	wg.Wait()
 }
