@@ -38,10 +38,10 @@ type animeCollection struct {
 	name string // user defined name
 	path string
 
-	animeFolders map[uuid.UUID]*AnimeFolder
-
-	// collectionWatcher *fsnotify.Watcher
-	isWatchingCollection bool
+	animeFolders           map[uuid.UUID]*AnimeFolder
+	isWatchingCollection   bool
+	isWatchingAnimeFolders bool
+	animeFolderWatcher     *fsnotify.Watcher // also exists if anime folders are not watched
 
 	mutex  sync.RWMutex
 	wg     sync.WaitGroup
@@ -66,7 +66,7 @@ func NewAnimeCollection(name string, path string, logger utils.Logger) (AnimeCol
 		path: path,
 
 		animeFolders: make(map[uuid.UUID]*AnimeFolder),
-		logger:       logger.New("AnimeCollection<" + name + ">"),
+		logger:       logger.New("AnimeCollection[" + name + "]"),
 	}, nil
 }
 
@@ -74,11 +74,16 @@ func (c *animeCollection) WatchFilesystem(ctx context.Context, alsoWatchFolders 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if err := c.loadFromFilesystem(); err != nil {
+	if err := c.clear(); err != nil {
 		return nil, err
 	}
 
 	collectionWatcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	c.animeFolderWatcher, err = fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
@@ -88,22 +93,41 @@ func (c *animeCollection) WatchFilesystem(ctx context.Context, alsoWatchFolders 
 	c.wg.Add(1)
 	go func() {
 		defer func() {
-			close(errOut)
 			c.mutex.Lock()
 			c.isWatchingCollection = false
+			c.isWatchingAnimeFolders = false
+			if err := c.animeFolderWatcher.Close(); err != nil {
+				errOut <- fmt.Errorf("Failed to close anime folder watcher: %s", err)
+			}
+			c.animeFolderWatcher = nil
+			if err := collectionWatcher.Close(); err != nil {
+				errOut <- fmt.Errorf("Failed to close collection watcher: %s", err)
+			}
 			c.mutex.Unlock()
+			close(errOut)
 			c.wg.Done()
 		}()
 
 		logger := c.logger.New("watcher")
 		for {
 			select {
+			// collection events:
 			case event := <-collectionWatcher.Events:
 				if err := c.onCollectionWatcherEvent(event, logger); err != nil {
 					errOut <- fmt.Errorf("Failed to process event %v: %s", event, err)
 				}
 			case err := <-collectionWatcher.Errors:
 				errOut <- fmt.Errorf("Error while watching anime collection: %s", err)
+
+			// anime folder events:
+			case event := <-c.animeFolderWatcher.Events:
+				if err := c.onAnimeFolderWatcherEvent(event, logger); err != nil {
+					errOut <- fmt.Errorf("Failed to process event %v: %s", event, err)
+				}
+			case err := <-c.animeFolderWatcher.Errors:
+				errOut <- fmt.Errorf("Error while watching anime collection: %s", err)
+
+			// abort:
 			case <-ctx.Done():
 				logger.Debugf("Stopping anime collection watcher")
 				return
@@ -117,23 +141,25 @@ func (c *animeCollection) WatchFilesystem(ctx context.Context, alsoWatchFolders 
 		return nil, fmt.Errorf("Failed to watch directory: %s", err)
 	}
 
+	c.isWatchingAnimeFolders = alsoWatchFolders
+	if err := c.loadFromFilesystem(); err != nil {
+		return nil, err
+	}
 	return errOut, nil
 }
 
 func (c *animeCollection) LoadFromFilesystem() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-
-	return c.loadFromFilesystem()
-}
-
-// loadFromFilesystem clears the collection and re-initializes it from the filesystem; the caller needs to lock the mutex beforehand
-func (c *animeCollection) loadFromFilesystem() error {
 	if err := c.clear(); err != nil {
 		return err
 	}
-	c.logger.Debugf("Initializing anime collection...")
+	return c.loadFromFilesystem()
+}
 
+// loadFromFilesystem adds all folders from the filesystem; the caller might want to clear() beforehand; the caller needs to lock the mutex beforehand
+func (c *animeCollection) loadFromFilesystem() error {
+	c.logger.Debugf("Initializing anime collection...")
 	files, err := ioutil.ReadDir(c.path)
 	if err != nil {
 		return err
@@ -168,7 +194,9 @@ func (c *animeCollection) clear() error {
 
 	c.logger.Debug("Clearing anime collection...")
 	for folderID := range c.animeFolders {
-		c.removeFolder(folderID)
+		if err := c.removeFolder(folderID); err != nil {
+			c.logger.Errorf("Failed to remove anime folder: %s", err)
+		}
 	}
 	if len(c.animeFolders) != 0 {
 		c.logger.Panicf("Failed to clear anime collection. Remaining data: %v", c.animeFolders)
@@ -181,15 +209,19 @@ func (c *animeCollection) onCollectionWatcherEvent(event fsnotify.Event, logger 
 
 	if event.Op&fsnotify.Remove != 0 || event.Op&fsnotify.Rename != 0 { // After a rename, a create follows automatically
 		logger.Debugf("Detected the removal of %q", fileName)
-		return c.removeFolderByName(fileName)
-
-		// danach: log-message wenn watch erzeugt wird
-		// danach: anime folders auch monitoren?
-
+		if err := c.removeFolderByName(fileName); err != nil {
+			// If the file was deleted before the addFolder added it, the remove will fail as well --> ignore it
+			logger.Debugf("Failed to remove anime folder %q. "+
+				"Maybe it was alreaedy removed before it could get added to the collection?", fileName)
+		}
 	} else if event.Op&fsnotify.Create != 0 {
-		isDir, err := IsDir(filepath.Join(c.path, fileName))
+		fullPath := filepath.Join(c.path, fileName)
+		isDir, err := IsDir(fullPath)
 		if err != nil {
-			return err
+			// Maybe the file / directory has already been deleted since the event --> ignore it
+			logger.Debugf("Failed to determine if the created element (%q) is a directory. "+
+				"Maybe it has been deleted in the mean time?", fileName)
+			return nil
 		}
 		if !isDir { // Not interested
 			return nil
@@ -202,7 +234,18 @@ func (c *animeCollection) onCollectionWatcherEvent(event fsnotify.Event, logger 
 	return nil
 }
 
-// addFolder adds a new anime folder (that is ensured to exist), or returns the id if the folder has already been added; the caller needs to lock the mutex beforehand
+func (c *animeCollection) onAnimeFolderWatcherEvent(event fsnotify.Event, logger utils.Logger) error {
+	fileName := filepath.Base(event.Name)
+
+	if event.Op&(fsnotify.Remove|fsnotify.Rename|fsnotify.Create) == 0 {
+		return nil // Not interested
+	}
+
+	logger.Debugf("Detected content modification of anime folder %q", fileName)
+	return nil
+}
+
+// addFolder adds a new anime folder, or returns the id if the folder has already been added; the caller needs to lock the mutex beforehand
 func (c *animeCollection) addFolder(folderName string) (uuid.UUID, error) {
 	if folder := c.animeFolder(folderName); folder != nil {
 		c.logger.Debugf("Ignoring anime folder %q, because it is already part of the collection", folderName)
@@ -213,6 +256,14 @@ func (c *animeCollection) addFolder(folderName string) (uuid.UUID, error) {
 	animeFolder := NewAnimeFolder(c.path, folderName)
 
 	c.animeFolders[animeFolder.ID] = animeFolder
+
+	if c.isWatchingAnimeFolders {
+		if err := c.animeFolderWatcher.Add(animeFolder.FullPath()); err != nil {
+			// Maybe the directory has already been deleted again --> ignore it
+			c.logger.Debugf("Failed to create watcher for the anime folder %q. "+
+				"Maybe it has been deleted in the mean time?", folderName)
+		}
+	}
 	return animeFolder.ID, nil
 }
 
@@ -225,13 +276,26 @@ func (c *animeCollection) removeFolderByName(folderName string) error {
 	if folder == nil {
 		return fmt.Errorf("Folder %q not found", folderName)
 	}
-	c.removeFolder(folder.ID)
-	return nil
+	return c.removeFolder(folder.ID)
 }
 
 // removeFolder removes an existing anime folder from the collection; the caller needs to lock the mutex beforehand
-func (c *animeCollection) removeFolder(folderID uuid.UUID) {
+func (c *animeCollection) removeFolder(folderID uuid.UUID) error {
+	folder, ok := c.animeFolders[folderID]
+	if !ok {
+		return fmt.Errorf("Unable to remove folder. ID %v not found", folderID)
+	}
+
 	delete(c.animeFolders, folderID)
+
+	if c.isWatchingAnimeFolders {
+		if err := c.animeFolderWatcher.Remove(folder.FullPath()); err != nil {
+			// Maybe the file / directory has already been deleted--> ignore it
+			c.logger.Debugf("Could not remove watcher for anime folder %q; "+
+				"Maybe it has been deleted in the mean time? - %s", folder.FolderName, err)
+		}
+	}
+	return nil
 }
 
 func (c *animeCollection) AnimeFolder(folderName string) *AnimeFolder {

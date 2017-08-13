@@ -16,7 +16,7 @@ func main() {
 
 	// config := DefaultConfig()
 	ctx := context.Background()
-	ctx, _ = context.WithTimeout(ctx, 5*time.Second)
+	ctx, _ = context.WithTimeout(ctx, 8*time.Second)
 
 	identificationChannel := make(chan *aniscraper.AnimeFolder, 100)
 
@@ -25,8 +25,7 @@ func main() {
 
 	// bindingContext := aniscraper.NewBindingContext(ctx)
 
-	// folder := "C:\\Users\\Jakob\\Desktop\\M"
-	folder := "M:\\"
+	folder := "D:\\deleteme"
 
 	// server := webserver.NewWebServer(&config.WebServerConfig,
 	// 	bindingContext.ClientBindingContext().NewClient, // Client connected callback
@@ -92,6 +91,14 @@ func main() {
 	// }
 
 	<-ctx.Done()
+
+	logger.Infof("Waiting for anime collection to finish")
 	animeCollection.Wait()
+
 	wg.Wait()
+
+	animeCollection.Iterate(func(folder *aniscraper.AnimeFolder) bool {
+		logger.Warnf("%s", folder.FolderName)
+		return true
+	})
 }

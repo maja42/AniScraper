@@ -5,8 +5,12 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/maja42/AniScraper/utils"
+
 	"github.com/PuerkitoBio/goquery"
 )
+
+var log utils.Logger // TODO: delete this variable
 
 // WebClient is used as a helper utility for fetching webcontent
 type WebClient interface {
