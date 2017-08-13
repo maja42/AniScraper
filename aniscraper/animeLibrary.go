@@ -1,203 +1,194 @@
 package aniscraper
 
-// import (
-// 	"fmt"
-// 	"io/ioutil"
-// 	"os"
-// 	"path/filepath"
-// 	"sync"
+import (
+	"context"
+	"fmt"
+	"os"
+	"sync"
 
-// 	"github.com/maja42/AniScraper/utils"
-// )
+	"github.com/google/uuid"
 
-// // AnimeCollection is a collection of multiple, unique anime folders
-// type AnimeCollection interface {
-// 	// AddCollection adds all subfolders of 'path' to the collection. The number of added folders is returned.
-// 	AddCollection(path string) (int, error)
-// 	// AddFolder adds a single anime folder to the collection. The anime folder ID is returned.
-// 	AddFolder(path string, name string) (AnimeFolderID, error)
-// 	// Contains checks if the given path / anime folder is already part of the collection
-// 	Contains(folder os.FileInfo) bool
-// 	// Folders returns all existing anime folders by their anime folder ID
-// 	//Folders() map[AnimeFolderID]*AnimeFolder
-// 	// AfIds() returns a list with allexisting anime folder ids stored in this collection
-// 	//AfIds() []AnimeFolderID
-// 	// Paths returns a list with absolute paths of all anime folders
-// 	//Paths() []string
+	"github.com/maja42/AniScraper/utils"
+)
 
-// 	// Iterate calls the given function for every animeFolder, until false is returned (do not continue) or there are no more folders
-// 	Iterate(callback func(folder *AnimeFolder) bool)
-// }
+// AnimeLibrary contains a set of different collections, each collection representing a folder with multiple animes
+type AnimeLibrary interface {
+	// AddCollection adds all subfolders of 'path' to the collection. The number of added folders is returned.
+	AddCollection(name string, path string) (uuid.UUID, error)
+	// Contains checks if the given path / anime folder is already part of the collection
+	Contains(folder os.FileInfo) AnimeCollection
+	// RemoveCollection removes a single collection from the library
+	RemoveCollection(collection uuid.UUID) error
+	// Clear removes all anime collections
+	Clear() error
 
-// type animeCollection struct {
-// 	mutex sync.RWMutex
+	// LoadFromFilesystem (re-)initializes all collections with the data from the filesystem; fails if the filesystem is currently watched
+	LoadFromFilesystem() error
+	// WatchFileSystem (re-)initializes  all collections, starts to monitor the underlying filesystem folder and updates the collections automatically; fails if the filesystem is already watched
+	WatchFilesystem(ctx context.Context, alsoWatchFolders bool) (<-chan error, error)
 
-// 	afidSequence utils.Sequence                 // Used for generating unique anime folder ids
-// 	folders      map[AnimeFolderID]*AnimeFolder // afid -> animeFolder
+	// // IterateCollections calls the given function for every animeCollection, until false is returned (do not continue) or there are no more collections; Returns false if the iteration was aborted
+	// IterateCollections(callback func(AnimeCollection) bool) bool
+	// // IterateAnimeFolders calls the given function for every animeFolder in every collection, until false is returned (do not continue) or there are no more folders; Returns false if the iteration was aborted
+	// IterateAnimeFolders(callback func(AnimeCollection, *AnimeFolder) bool) bool
+	// IterateAnimeFolders calls the given function for every animeFolder in every collection, until false is returned (do not continue) or there are no more folders; Returns false if the iteration was aborted
+	IterateAnimeFolders(callback func(*AnimeFolder) bool) bool
+}
 
-// 	bindingContext ServerBindingContext
-// }
+type animeLibrary struct {
+	libraryCollections map[uuid.UUID]libraryCollection
 
-// // NewAnimeCollection initialises and returns a new and empty anime collection
-// func NewAnimeCollection(bindingContext ServerBindingContext) AnimeCollection {
-// 	return &animeCollection{
-// 		afidSequence: utils.NewSequenceGenerator(0),
-// 		folders:      make(map[AnimeFolderID]*AnimeFolder, 0),
+	isWatchingFilesystem bool
 
-// 		bindingContext: bindingContext,
-// 	}
-// }
+	mutex  sync.RWMutex
+	logger utils.Logger
+}
 
-// func (collection *animeCollection) AddCollection(path string) (int, error) {
-// 	log.Debugf("Adding anime folders within directory %q...", path)
+type libraryCollection struct {
+	collection   AnimeCollection
+	watchContext context.Context
+}
 
-// 	addCount := 0
-// 	files, err := ioutil.ReadDir(path)
-// 	if err != nil {
-// 		return 0, err
-// 	}
+// NewAnimeLibrary returns a new and empty anime library
+func NewAnimeLibrary(logger utils.Logger) (AnimeLibrary, error) {
+	return &animeLibrary{
+		libraryCollections: make(map[uuid.UUID]libraryCollection, 0),
+		logger:             logger.New("AnimeLibrary"),
+	}, nil
+}
 
-// 	for _, file := range files {
-// 		fullPath := filepath.Join(path, file.Name())
-// 		if !file.IsDir() {
-// 			log.Debugf("Ignoring file %q", fullPath)
-// 			continue
-// 		}
-// 		log.Debugf("Found directory %q", fullPath)
+func (l *animeLibrary) AddCollection(name string, path string) (uuid.UUID, error) {
+	collection, err := NewAnimeCollection(name, path, l.logger)
+	if err != nil {
+		return uuid.Nil, err
+	}
 
-// 		_, err := collection.addFolder(path, file.Name())
-// 		if err != nil {
-// 			log.Warningf("Failed to add anime folder %q: %s", fullPath, err)
-// 		} else {
-// 			addCount++
-// 		}
-// 	}
-// 	log.Debugf("%d anime folders added", addCount)
-// 	return addCount, nil
-// }
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
 
-// func (collection *animeCollection) AddFolder(path string, folderName string) (AnimeFolderID, error) {
-// 	fullPath := filepath.Join(path, folderName)
+	fileInfo, err := GetFileInfo(collection.Path())
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("Cannot add collection to library: %s", err)
+	}
+	if existing := l.contains(fileInfo); existing != nil {
+		return existing.ID(), nil
+	}
 
-// 	log.Debug("Checking folder...")
-// 	exists, isDir := CheckFolder(fullPath)
-// 	if !exists {
-// 		return -1, fmt.Errorf("The path %q does not exist", fullPath)
-// 	}
-// 	if !isDir {
-// 		return -1, fmt.Errorf("Not a directory: %q", fullPath)
-// 	}
-// 	return collection.addFolder(path, folderName)
-// }
+	l.logger.Debugf("Adding collection %q", collection.Name())
+	l.libraryCollections[collection.ID()] = libraryCollection{
+		collection: collection,
+	}
+	return collection.ID(), nil
+}
 
-// // addFolder adds a new anime folder (that is ensured to exist)
-// func (collection *animeCollection) addFolder(path string, folderName string) (AnimeFolderID, error) {
-// 	var err error
-// 	path, err = filepath.EvalSymlinks(path)
-// 	if err != nil {
-// 		return -1, err
-// 	}
-// 	path, err = filepath.Abs(path) // Nice looking absolute path (propably not canonical!)
-// 	if err != nil {
-// 		return -1, err
-// 	}
+func (l *animeLibrary) RemoveCollection(collectionID uuid.UUID) error {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	return l.removeCollection(collectionID)
+}
 
-// 	afid := AnimeFolderID(collection.afidSequence.Next()) // the sequence maintains its own lock
-// 	animeFolder := &AnimeFolder{
-// 		ID:   afid,
-// 		Path: path,
-// 		Name: folderName,
-// 	}
+// removeFolder removes an existing anime collection from the library; the caller needs to lock the mutex beforehand
+func (l *animeLibrary) removeCollection(collectionID uuid.UUID) error {
+	libraryCollection, ok := l.libraryCollections[collectionID]
+	if !ok {
+		return fmt.Errorf("Unable to remove collection. ID %v not found", collectionID)
+	}
+	l.logger.Debugf("Removing collection %q from the library", libraryCollection.collection.Name())
+	delete(l.libraryCollections, collectionID)
+	return nil
+}
 
-// 	// The following uniqueness-checks have been disabled due to performance reasons
-// 	//
-// 	// log.Debug("Retrieving file info...")
-// 	// fileInfo, err := GetFileInfo(fullPath)
-// 	// if err != nil {
-// 	// 	return -1, err
-// 	// }
-// 	// log.Debug("Checking existence...")
-// 	// if collection.Contains(fileInfo) {
-// 	// 	return -1, fmt.Errorf("The anime collection already contains the directory %q", fullPath)
-// 	// }
+func (l *animeLibrary) Clear() error {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	l.logger.Infof("Removing all collections from the anime library")
+	for id := range l.libraryCollections {
+		if err := l.removeCollection(id); err != nil {
+			return err
+		}
+	}
+	if len(l.libraryCollections) != 0 {
+		l.logger.Panicf("Failed to clear anime library. Remaining data: %v", l.libraryCollections)
+	}
+	return nil
+}
 
-// 	if collection.containsPath(animeFolder.FullPath()) {
-// 		return -1, fmt.Errorf("The anime collection already contains a directory with the path %q", animeFolder.FullPath())
-// 	}
+func (l *animeLibrary) LoadFromFilesystem() error {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	if l.isWatchingFilesystem {
+		return fmt.Errorf("The filesystem is currently watched")
+	}
 
-// 	collection.mutex.Lock()
-// 	defer collection.mutex.Unlock()
+	for _, libraryCollection := range l.libraryCollections {
+		if err := libraryCollection.collection.LoadFromFilesystem(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-// 	log.Debug("Appending anime folder...")
-// 	collection.folders[afid] = animeFolder
+func (l *animeLibrary) WatchFilesystem(ctx context.Context, alsoWatchFolders bool) (<-chan error, error) {
+	return nil, fmt.Errorf("Not implemented yet")
+}
 
-// 	collection.bindingContext.NewAnimeFolder(animeFolder)
-// 	return afid, nil
-// }
+// func (l *animeLibrary) IterateCollections(callback func(AnimeCollection) bool) bool {
+// 	l.mutex.RLock()
+// 	defer l.mutex.RUnlock()
 
-// func (collection *animeCollection) Contains(folder os.FileInfo) bool {
-// 	collection.mutex.RLock()
-// 	defer collection.mutex.RUnlock()
-// 	return collection.contains(folder)
-// }
-
-// func (collection *animeCollection) contains(folder os.FileInfo) bool {
-// 	for _, animeFolder := range collection.folders {
-// 		animeFolderFileInfo, err := GetFileInfo(animeFolder.FullPath())
-// 		if err != nil {
-// 			log.Errorf("Failed to query existing anime folder %q: %v", animeFolder.FullPath(), err)
-// 			continue
-// 		}
-
-// 		if os.SameFile(folder, animeFolderFileInfo) {
-// 			return true
+// 	for _, collection := range l.collections {
+// 		if !callback(collection) {
+// 			return false
 // 		}
 // 	}
-// 	return false
+// 	return true
 // }
 
-// // containsPath checks if the collection already contains a folder with the same path;
-// // If false is returned, it does not neccessarily mean that the given folder path does not exist
-// func (collection *animeCollection) containsPath(folderPath string) bool {
-// 	for _, animeFolder := range collection.folders {
-// 		if folderPath == animeFolder.FullPath() {
-// 			return true
+// func (l *animeLibrary) IterateAnimeFolders(callback func(AnimeCollection, *AnimeFolder) bool) bool {
+// 	l.mutex.RLock()
+// 	defer l.mutex.RUnlock()
+
+// 	for _, collection := range l.collections {
+// 		cont := collection.Iterate(func(folder *AnimeFolder) bool {
+// 			return callback(collection, folder)
+// 		})
+// 		if !cont {
+// 			return false
 // 		}
 // 	}
-// 	return false
+// 	return true
 // }
 
-// // func (collection *animeCollection) Paths() []string {
-// // 	collection.mutex.RLock()
-// // 	defer collection.mutex.RUnlock()
+func (l *animeLibrary) IterateAnimeFolders(callback func(*AnimeFolder) bool) bool {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
 
-// // 	paths := make([]string, 0, len(collection.folders))
+	for _, libraryCollection := range l.libraryCollections {
+		if !libraryCollection.collection.Iterate(callback) {
+			return false
+		}
+	}
+	return true
+}
 
-// // 	for _, animeFolder := range collection.folders {
-// // 		paths = append(paths, animeFolder.FullPath())
-// // 	}
-// // 	return paths
-// // }
+func (l *animeLibrary) Contains(folder os.FileInfo) AnimeCollection {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+	return l.contains(folder)
+}
 
-// // func (collection *animeCollection) AfIds() []int {
-// // 	collection.mutex.RLock()
-// // 	defer collection.mutex.RUnlock()
+func (l *animeLibrary) contains(folder os.FileInfo) AnimeCollection {
+	for _, libraryCollection := range l.libraryCollections {
+		collection := libraryCollection.collection
+		collectionFileInfo, err := GetFileInfo(collection.Path())
+		if err != nil {
+			log.Errorf("Failed to query file info of collection %q: %v", collection.Name(), err)
+			continue
+		}
 
-// // 	uids := make([]int, 0, len(collection.folders))
-
-// // 	for uid := range collection.folders {
-// // 		uids = append(uids, uid)
-// // 	}
-// // 	return uids
-// // }
-
-// func (collection *animeCollection) Iterate(callback func(folder *AnimeFolder) bool) {
-// 	collection.mutex.RLock()
-// 	defer collection.mutex.RUnlock()
-
-// 	for _, animeFolder := range collection.folders {
-// 		if !callback(animeFolder) {
-// 			return
-// 		}
-// 	}
-// }
+		if os.SameFile(folder, collectionFileInfo) {
+			return collection
+		}
+	}
+	return nil
+}

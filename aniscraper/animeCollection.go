@@ -16,11 +16,18 @@ import (
 
 // AnimeCollection represents a single directory that can contain multiple individual anime folders
 type AnimeCollection interface {
+	// ID returns the uuid
+	ID() uuid.UUID
+	// Name returns the  user specified name
+	Name() string
+	// Path returns the path to the underlying filesystem folder
+	Path() string
+
 	// AnimeFolder returns the anime folder with the given folder name (not the path); no trailing slash
 	AnimeFolder(folderName string) *AnimeFolder
-	// LoadFromFilesystem (re-)initializes the anime-folder with the data from the filesystem; fails if the filesystem is currently watched
+	// LoadFromFilesystem (re-)initializes the collection with the data from the filesystem; fails if the filesystem is currently watched
 	LoadFromFilesystem() error
-	// WatchFileSystem (re-)initializes the anime-folder, starts to monitor the underlying filesystem folder and updates the collection automatically; fails if the filesystem is already watched
+	// WatchFileSystem (re-)initializes the collection, starts to monitor the underlying filesystem folder and updates the collection automatically; fails if the filesystem is already watched
 	WatchFilesystem(ctx context.Context, alsoWatchFolders bool) (<-chan error, error)
 	// Clear removes all anime folders; fails if the filesystem is currently watched
 	Clear() error
@@ -28,8 +35,8 @@ type AnimeCollection interface {
 	// Wait blocks until all go routines (if any) have finished
 	Wait()
 
-	// Iterate calls the given function for every animeFolder, until false is returned (do not continue) or there are no more folders
-	Iterate(callback func(folder *AnimeFolder) bool)
+	// Iterate calls the given function for every animeFolder, until false is returned (do not continue) or there are no more folders; Returns false if the iteration was aborted
+	Iterate(callback func(folder *AnimeFolder) bool) bool
 }
 
 // animeCollection is a single directory that can contain multiple individual anime folders
@@ -48,7 +55,7 @@ type animeCollection struct {
 	logger utils.Logger
 }
 
-// NewAnimeCollection initialises and returns a new and empty anime collection
+// NewAnimeCollection returns a new and empty anime collection
 func NewAnimeCollection(name string, path string, logger utils.Logger) (AnimeCollection, error) {
 	var err error
 	path, err = filepath.EvalSymlinks(path)
@@ -68,6 +75,18 @@ func NewAnimeCollection(name string, path string, logger utils.Logger) (AnimeCol
 		animeFolders: make(map[uuid.UUID]*AnimeFolder),
 		logger:       logger.New("AnimeCollection[" + name + "]"),
 	}, nil
+}
+
+func (c *animeCollection) ID() uuid.UUID {
+	return c.id
+}
+
+func (c *animeCollection) Name() string {
+	return c.name
+}
+
+func (c *animeCollection) Path() string {
+	return c.path
 }
 
 func (c *animeCollection) WatchFilesystem(ctx context.Context, alsoWatchFolders bool) (<-chan error, error) {
@@ -287,13 +306,15 @@ func (c *animeCollection) removeFolder(folderID uuid.UUID) error {
 	}
 
 	delete(c.animeFolders, folderID)
-
+	_ = folder
 	if c.isWatchingAnimeFolders {
-		if err := c.animeFolderWatcher.Remove(folder.FullPath()); err != nil {
-			// Maybe the file / directory has already been deleted--> ignore it
-			c.logger.Debugf("Could not remove watcher for anime folder %q; "+
-				"Maybe it has been deleted in the mean time? - %s", folder.FolderName, err)
-		}
+		// This call might cause a deadlock in fsnotify. It is commented until the following issue is resolved: https://github.com/fsnotify/fsnotify/issues/215
+		//
+		// 	if err := c.animeFolderWatcher.Remove(folder.FullPath()); err != nil {
+		// 		// Maybe the file / directory has already been deleted--> ignore it
+		// 		c.logger.Debugf("Could not remove watcher for anime folder %q; "+
+		// 			"Maybe it has been deleted in the mean time? - %s", folder.FolderName, err)
+		// 	}
 	}
 	return nil
 }
@@ -314,15 +335,16 @@ func (c *animeCollection) animeFolder(folderName string) *AnimeFolder {
 	return nil
 }
 
-func (c *animeCollection) Iterate(callback func(folder *AnimeFolder) bool) {
+func (c *animeCollection) Iterate(callback func(folder *AnimeFolder) bool) bool {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
 	for _, animeFolder := range c.animeFolders {
 		if !callback(animeFolder) {
-			return
+			return false
 		}
 	}
+	return true
 }
 
 func (c *animeCollection) Wait() {

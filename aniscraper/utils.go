@@ -13,20 +13,20 @@ func IsDir(path string) (bool, error) {
 	return file.Mode().IsDir(), nil
 }
 
-// // GetFileInfo opens the given file/directory for reading, retrieves the fileinfo and closes the file/directory
-// func GetFileInfo(path string) (os.FileInfo, error) {
-// 	file, err := os.Open(path)
-// 	if err != nil { // Does not exist / unable to open
-// 		return nil, err
-// 	}
+// GetFileInfo opens the given file/directory for reading and retrieves the fileinfo
+func GetFileInfo(path string) (os.FileInfo, error) {
+	file, err := os.Open(path)
+	if err != nil { // Does not exist / unable to open
+		return nil, err
+	}
 
-// 	fileInfo, statErr := file.Stat()
+	fileInfo, statErr := file.Stat()
 
-// 	if err := file.Close(); err != nil {
-// 		return nil, err
-// 	}
-// 	return fileInfo, statErr
-// }
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	return fileInfo, statErr
+}
 
 // // CheckFolder checks if the given path exists and can be opened (yes: true) and if it is a directory (true) or a file (false)
 // func CheckFolder(path string) (bool, bool) {

@@ -18,14 +18,20 @@ func main() {
 	ctx := context.Background()
 	ctx, _ = context.WithTimeout(ctx, 8*time.Second)
 
-	identificationChannel := make(chan *aniscraper.AnimeFolder, 100)
+	// identificationChannel := make(chan *aniscraper.AnimeFolder, 100)
 
-	webClient := aniscraper.NewWebClient()
-	identifier := aniscraper.NewAnimeIdentifier(webClient, identificationChannel)
+	// webClient := aniscraper.NewWebClient()
+	// identifier := aniscraper.NewAnimeIdentifier(webClient, identificationChannel)
 
 	// bindingContext := aniscraper.NewBindingContext(ctx)
 
 	folder := "D:\\deleteme"
+
+	library, err := aniscraper.NewAnimeLibrary(logger)
+	if err != nil {
+		logger.Panicf("Failed to create anime library: %s", err)
+	}
+	_ = library
 
 	// server := webserver.NewWebServer(&config.WebServerConfig,
 	// 	bindingContext.ClientBindingContext().NewClient, // Client connected callback
@@ -56,7 +62,7 @@ func main() {
 	// bindingContext.Initialize(server, animeCollection)
 
 	// Starting...
-	identifier.Start(ctx, 8) // 8 animes at once
+	// identifier.Start(ctx, 8) // 8 animes at once
 	// server.Start(ctx)
 
 	// count, err := animeCollection.AddCollection(folder)
