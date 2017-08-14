@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/maja42/AniScraper/aniscraper"
+	"github.com/maja42/AniScraper/filesystem"
+	"github.com/maja42/AniScraper/taskplanner"
 )
 
 func main() {
@@ -25,26 +26,28 @@ func main() {
 
 	// bindingContext := aniscraper.NewBindingContext(ctx)
 
-	folder := "D:\\deleteme"
-
-	library, err := aniscraper.NewAnimeLibrary(logger)
+	library, err := filesystem.NewAnimeLibrary(100, logger)
 	if err != nil {
 		logger.Panicf("Failed to create anime library: %s", err)
 	}
-	_ = library
+
+	taskPlanner := taskplanner.NewTaskPlanner(library, logger)
 
 	// server := webserver.NewWebServer(&config.WebServerConfig,
 	// 	bindingContext.ClientBindingContext().NewClient, // Client connected callback
 	// 	nil) // Client disconnected callback
 
-	animeCollection, err := aniscraper.NewAnimeCollection("Test", folder, logger)
-	if err != nil {
-		logger.Panicf("Failed to create anime collection %q: %s", folder, err)
+	if _, err = library.AddCollection("Test", "D:\\deleteme1"); err != nil {
+		logger.Panicf("Failed to add anime collection: %s", err)
 	}
 
-	errors, err := animeCollection.WatchFilesystem(ctx, true)
+	errors, err := library.WatchFilesystem(ctx, true)
 	if err != nil {
-		logger.Panicf("Failed to create anime collection %q: %s", folder, err)
+		logger.Panicf("Failed to watch filesystem: %s", err)
+	}
+
+	if _, err = library.AddCollection("Test", "D:\\deleteme2"); err != nil {
+		logger.Panicf("Failed to add anime collection: %s", err)
 	}
 
 	wg.Add(1)
@@ -55,10 +58,13 @@ func main() {
 			if !ok {
 				return
 			}
-			logger.Errorf("AC watcher error: %s", err)
+			logger.Errorf("Filesystem watcher error: %s", err)
 		}
 	}()
 
+	if err := taskPlanner.Start(ctx); err != nil {
+		logger.Panicf("Failed to start task planner: %s", err)
+	}
 	// bindingContext.Initialize(server, animeCollection)
 
 	// Starting...
@@ -98,13 +104,14 @@ func main() {
 
 	<-ctx.Done()
 
-	logger.Infof("Waiting for anime collection to finish")
-	animeCollection.Wait()
+	if err := library.Clear(); err != nil {
+		logger.Panicf("Failed to clear library: %s", err)
+	}
+	logger.Infof("Waiting for library to finish")
+	library.Wait()
+
+	logger.Infof("Waiting for task planner to finish")
+	taskPlanner.Wait()
 
 	wg.Wait()
-
-	animeCollection.Iterate(func(folder *aniscraper.AnimeFolder) bool {
-		logger.Warnf("%s", folder.FolderName)
-		return true
-	})
 }

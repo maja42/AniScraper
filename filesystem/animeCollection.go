@@ -1,4 +1,4 @@
-package aniscraper
+package filesystem
 
 import (
 	"fmt"
@@ -35,6 +35,12 @@ type AnimeCollection interface {
 	// Wait blocks until all go routines (if any) have finished
 	Wait()
 
+	// Events returns the event channel which emits any changes to the collection
+	Events() <-chan Event
+
+	// AnimeFolderCount returns the number of anime folders
+	AnimeFolderCount() int
+
 	// Iterate calls the given function for every animeFolder, until false is returned (do not continue) or there are no more folders; Returns false if the iteration was aborted
 	Iterate(callback func(folder *AnimeFolder) bool) bool
 }
@@ -50,13 +56,15 @@ type animeCollection struct {
 	isWatchingAnimeFolders bool
 	animeFolderWatcher     *fsnotify.Watcher // also exists if anime folders are not watched
 
+	events chan Event // outgoing events
+
 	mutex  sync.RWMutex
 	wg     sync.WaitGroup
 	logger utils.Logger
 }
 
 // NewAnimeCollection returns a new and empty anime collection
-func NewAnimeCollection(name string, path string, logger utils.Logger) (AnimeCollection, error) {
+func NewAnimeCollection(name string, path string, eventChannelBufferSize int, logger utils.Logger) (AnimeCollection, error) {
 	var err error
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
@@ -73,6 +81,7 @@ func NewAnimeCollection(name string, path string, logger utils.Logger) (AnimeCol
 		path: path,
 
 		animeFolders: make(map[uuid.UUID]*AnimeFolder),
+		events:       make(chan Event, eventChannelBufferSize),
 		logger:       logger.New("AnimeCollection[" + name + "]"),
 	}, nil
 }
@@ -254,13 +263,28 @@ func (c *animeCollection) onCollectionWatcherEvent(event fsnotify.Event, logger 
 }
 
 func (c *animeCollection) onAnimeFolderWatcherEvent(event fsnotify.Event, logger utils.Logger) error {
-	fileName := filepath.Base(event.Name)
-
 	if event.Op&(fsnotify.Remove|fsnotify.Rename|fsnotify.Create) == 0 {
 		return nil // Not interested
 	}
 
-	logger.Debugf("Detected content modification of anime folder %q", fileName)
+	dirPath := filepath.Dir(event.Name)
+	folderName := filepath.Base(dirPath)
+
+	if c.path == dirPath {
+		logger.Debugf("Ignoring anime folder event (the whole anime folder was affected, not just a subfolder)")
+		return nil
+	}
+
+	animeFolder := c.animeFolder(folderName)
+	if animeFolder == nil {
+		return fmt.Errorf("Could not determine anime folder of watcher event %v. Used folder name: %q", event, folderName)
+	}
+
+	logger.Debugf("Detected content modification of anime folder %q", folderName)
+	c.events <- Event{
+		EventType:   FOLDER_CONTENT_MODIFIED,
+		AnimeFolder: animeFolder,
+	}
 	return nil
 }
 
@@ -275,6 +299,11 @@ func (c *animeCollection) addFolder(folderName string) (uuid.UUID, error) {
 	animeFolder := NewAnimeFolder(c.path, folderName)
 
 	c.animeFolders[animeFolder.ID] = animeFolder
+
+	c.events <- Event{
+		EventType:   FOLDER_ADDED,
+		AnimeFolder: animeFolder,
+	}
 
 	if c.isWatchingAnimeFolders {
 		if err := c.animeFolderWatcher.Add(animeFolder.FullPath()); err != nil {
@@ -316,6 +345,10 @@ func (c *animeCollection) removeFolder(folderID uuid.UUID) error {
 		// 			"Maybe it has been deleted in the mean time? - %s", folder.FolderName, err)
 		// 	}
 	}
+	c.events <- Event{
+		EventType:   FOLDER_REMOVED,
+		AnimeFolder: folder,
+	}
 	return nil
 }
 
@@ -335,6 +368,12 @@ func (c *animeCollection) animeFolder(folderName string) *AnimeFolder {
 	return nil
 }
 
+func (c *animeCollection) AnimeFolderCount() int {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return len(c.animeFolders)
+}
+
 func (c *animeCollection) Iterate(callback func(folder *AnimeFolder) bool) bool {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
@@ -349,4 +388,8 @@ func (c *animeCollection) Iterate(callback func(folder *AnimeFolder) bool) bool 
 
 func (c *animeCollection) Wait() {
 	c.wg.Wait()
+}
+
+func (c *animeCollection) Events() <-chan Event {
+	return c.events
 }

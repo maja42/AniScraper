@@ -112,3 +112,36 @@ func (l *StdLogger) Panic(args ...interface{}) {
 func (l *StdLogger) Panicf(format string, args ...interface{}) {
 	l.innerLogger.WithFields(l.logFields).Panicf(format, args...)
 }
+
+type NoLogger struct{}
+
+var _ Logger = &NoLogger{}
+
+func NewNoLogger() *NoLogger {
+	return &NoLogger{}
+}
+
+func (l *NoLogger) New(module string) Logger {
+	return l
+}
+func (l *NoLogger) Module() string {
+	return moduleSeparator
+}
+
+func (l *NoLogger) SetLevel(level logrus.Level)             {}
+func (l *NoLogger) SetFormatter(formatter logrus.Formatter) {}
+
+func (l *NoLogger) Debug(args ...interface{})                 {}
+func (l *NoLogger) Debugf(format string, args ...interface{}) {}
+func (l *NoLogger) Info(args ...interface{})                  {}
+func (l *NoLogger) Infof(format string, args ...interface{})  {}
+func (l *NoLogger) Warn(args ...interface{})                  {}
+func (l *NoLogger) Warnf(format string, args ...interface{})  {}
+func (l *NoLogger) Error(args ...interface{})                 {}
+func (l *NoLogger) Errorf(format string, args ...interface{}) {}
+func (l *NoLogger) Panic(args ...interface{}) {
+	panic(args)
+}
+func (l *NoLogger) Panicf(format string, args ...interface{}) {
+	panic(fmt.Sprintf(format, args))
+}

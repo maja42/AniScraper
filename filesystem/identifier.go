@@ -1,4 +1,4 @@
-package aniscraper
+package filesystem
 
 import (
 	"context"

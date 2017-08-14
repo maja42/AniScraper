@@ -1,6 +1,7 @@
-package aniscraper
+package filesystem
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"github.com/google/uuid"
@@ -24,4 +25,8 @@ func NewAnimeFolder(path string, folderName string) *AnimeFolder {
 // FullPath Returns the full path of the anime folder, without a trailing path separator
 func (f *AnimeFolder) FullPath() string {
 	return filepath.Join(f.Path, f.FolderName)
+}
+
+func (f *AnimeFolder) String() string {
+	return fmt.Sprintf("ID: %v, FolderName: %-20s, Path: %s", f.ID, f.FolderName, f.Path)
 }
